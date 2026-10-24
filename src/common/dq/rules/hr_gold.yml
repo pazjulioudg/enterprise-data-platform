@@ -1,0 +1,32 @@
+# Quality gate run before HR data is promoted to Gold.
+# severity: error = blocks promotion | warn = recorded only. max_fail_pct = tolerated % of failing rows.
+gate: hr_gold
+tables:
+  dim_department:
+    rules:
+      - {name: dept_id_not_null, type: not_null, column: dept_id}
+      - {name: dept_id_unique, type: unique, columns: [dept_id]}
+  dim_employee:
+    rules:
+      - {name: emplid_not_null, type: not_null, column: emplid, description: "Business key present"}
+      - {name: employee_sk_unique, type: unique, columns: [employee_sk], description: "Surrogate key unique"}
+      - {name: one_current_version, type: unique, columns: [emplid], where: "is_current",
+         description: "Exactly one current SCD2 version per employee"}
+      - {name: valid_window, type: expression, expression: "valid_to >= valid_from",
+         description: "SCD2 validity window is not inverted"}
+      - {name: salary_positive, type: expression, expression: "annual_rt > 0"}
+      - {name: country_known, type: in_set, column: country_code, values: [US, GB, IN], severity: warn,
+         description: "NULL allowed (erased employees); other values are unexpected"}
+      - {name: dept_exists, type: foreign_key, column: dept_id, ref_table: dim_department, ref_column: dept_id,
+         description: "Referential integrity to the department dimension"}
+  fact_absence:
+    rules:
+      - {name: absence_id_unique, type: unique, columns: [absence_id]}
+      - {name: absence_days_range, type: between, column: days, min: 1, max: 365}
+      - {name: absence_has_employee_version, type: not_null, column: employee_sk, max_fail_pct: 1.0,
+         description: "Orphans (no employee version on the absence date) tolerated up to 1%"}
+  fact_engagement:
+    rules:
+      - {name: response_id_unique, type: unique, columns: [response_id]}
+      - {name: engagement_range, type: between, column: engagement_score, min: 0, max: 10}
+      - {name: engagement_has_employee_version, type: not_null, column: employee_sk, max_fail_pct: 1.0}

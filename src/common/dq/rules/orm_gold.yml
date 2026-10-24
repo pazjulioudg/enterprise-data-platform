@@ -1,0 +1,22 @@
+# Quality gate run before ORM data is promoted to Gold (regulatory reporting data).
+gate: orm_gold
+tables:
+  movements_converted:
+    rules:
+      - {name: fx_rate_available, type: not_null, column: rate_to_eur,
+         description: "Every movement converts to EUR at its accounting date"}
+  fact_loss_event_position:
+    rules:
+      - {name: event_id_unique, type: unique, columns: [event_id]}
+      - {name: event_type_resolved, type: not_null, column: event_type_l1_code,
+         description: "L2 event type resolves to an L1 type"}
+      - {name: business_line_resolved, type: not_null, column: business_line_l1_code}
+      - {name: gross_not_negative, type: expression, expression: "gross_loss_txn >= 0"}
+      - {name: dates_in_sequence, type: expression,
+         expression: "discovery_date >= occurrence_date AND (first_accounting_date IS NULL OR first_accounting_date >= occurrence_date)",
+         description: "Regulatory date-sequence rule"}
+      - {name: confidentiality_valid, type: in_set, column: confidentiality, values: [STANDARD, RESTRICTED]}
+  recon_loss_vs_gl:
+    rules:
+      - {name: gl_reconciles, type: in_set, column: recon_status, values: [MATCHED], severity: warn, max_fail_pct: 5.0,
+         description: "Loss data agrees with the general ledger; breaks investigated, tolerated up to 5%"}

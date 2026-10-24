@@ -1,0 +1,211 @@
+# Orchestration jobs (serverless). environment "default" installs DQX and Great Expectations for the Gold gates.
+resources:
+  jobs:
+    hr_daily:
+      name: hr-daily-${bundle.target}
+      description: HCM CDC batch -> Bronze/Silver pipeline -> Gold with DQ gate
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      tags:
+        cost_centre: edp
+        domain: hr
+      parameters:
+      - name: batch_id
+        default: '0'
+      - name: dq_engine
+        default: dqx
+      environments: &id001
+      - environment_key: default
+        spec:
+          environment_version: '3'
+          dependencies:
+          - databricks-labs-dqx==0.17.0
+          - great_expectations==1.24.1
+          - pyyaml>=6
+      email_notifications:
+        on_failure:
+        - ${var.notification_email}
+        on_duration_warning_threshold_exceeded:
+        - ${var.notification_email}
+      health:
+        rules:
+        - metric: RUN_DURATION_SECONDS
+          op: GREATER_THAN
+          value: 1800
+      tasks:
+      - task_key: generate_cdc
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/hr/generator/generate_hr_cdc.py
+          parameters:
+          - --catalog
+          - ${var.catalog}
+          - --batch-id
+          - '{{job.parameters.batch_id}}'
+          - --employees
+          - ${var.employees}
+      - task_key: bronze_silver
+        depends_on:
+        - task_key: generate_cdc
+        pipeline_task:
+          pipeline_id: ${resources.pipelines.hr_bronze_silver.id}
+          full_refresh: false
+      - task_key: gold
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/hr/gold/build_gold.py
+          parameters:
+          - --catalog
+          - ${var.catalog}
+          - --dq-engine
+          - '{{job.parameters.dq_engine}}'
+        depends_on:
+        - task_key: bronze_silver
+    orm_daily:
+      name: orm-daily-${bundle.target}
+      description: ORM extracts -> canonical Silver -> Gold marts with DQ gate
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      tags:
+        cost_centre: edp
+        domain: risk
+      parameters:
+      - name: batch_id
+        default: '0'
+      - name: as_at
+        default: ${var.orm_as_at}
+      - name: dq_engine
+        default: dqx
+      environments: *id001
+      email_notifications:
+        on_failure:
+        - ${var.notification_email}
+        on_duration_warning_threshold_exceeded:
+        - ${var.notification_email}
+      health:
+        rules:
+        - metric: RUN_DURATION_SECONDS
+          op: GREATER_THAN
+          value: 1800
+      tasks:
+      - task_key: generate_sources
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/orm/generator/generate_orm_sources.py
+          parameters:
+          - --catalog
+          - ${var.risk_catalog}
+          - --batch-id
+          - '{{job.parameters.batch_id}}'
+      - task_key: bronze_silver
+        depends_on:
+        - task_key: generate_sources
+        pipeline_task:
+          pipeline_id: ${resources.pipelines.risk_bronze_silver.id}
+          full_refresh: false
+      - task_key: gold
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/orm/gold/build_risk_gold.py
+          parameters:
+          - --catalog
+          - ${var.risk_catalog}
+          - --as-at
+          - '{{job.parameters.as_at}}'
+          - --dq-engine
+          - '{{job.parameters.dq_engine}}'
+        depends_on:
+        - task_key: bronze_silver
+    finance_ticks:
+      name: finance-ticks-${bundle.target}
+      description: Drop a tick micro-batch -> exactly-once pipeline -> daily Gold views
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      tags:
+        cost_centre: edp
+        domain: finance
+      parameters:
+      - name: batch_id
+        default: '0'
+      environments: *id001
+      email_notifications:
+        on_failure:
+        - ${var.notification_email}
+        on_duration_warning_threshold_exceeded:
+        - ${var.notification_email}
+      health:
+        rules:
+        - metric: RUN_DURATION_SECONDS
+          op: GREATER_THAN
+          value: 1800
+      tasks:
+      - task_key: generate_ticks
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/finance/generator/generate_ticks.py
+          parameters:
+          - --catalog
+          - ${var.finance_catalog}
+          - --batch-id
+          - '{{job.parameters.batch_id}}'
+      - task_key: ticks_pipeline
+        depends_on:
+        - task_key: generate_ticks
+        pipeline_task:
+          pipeline_id: ${resources.pipelines.finance_ticks.id}
+          full_refresh: false
+    platform_ops:
+      name: platform-ops-${bundle.target}
+      description: GDPR erasure requests, then table maintenance (OPTIMIZE / VACUUM / ANALYZE)
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      tags:
+        cost_centre: edp
+        domain: platform
+      parameters:
+      - name: vacuum_retain_hours
+        default: '168'
+      environments: *id001
+      email_notifications:
+        on_failure:
+        - ${var.notification_email}
+        on_duration_warning_threshold_exceeded:
+        - ${var.notification_email}
+      health:
+        rules:
+        - metric: RUN_DURATION_SECONDS
+          op: GREATER_THAN
+          value: 1800
+      tasks:
+      - task_key: gdpr_erasure
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/ops/gdpr_erasure.py
+          parameters:
+          - --hr-catalog
+          - ${var.catalog}
+      - task_key: table_maintenance
+        environment_key: default
+        max_retries: 1
+        min_retry_interval_millis: 60000
+        spark_python_task:
+          python_file: ../src/ops/table_maintenance.py
+          parameters:
+          - --catalogs
+          - ${var.catalog},${var.risk_catalog},${var.finance_catalog}
+          - --retain-hours
+          - '{{job.parameters.vacuum_retain_hours}}'
+        depends_on:
+        - task_key: gdpr_erasure

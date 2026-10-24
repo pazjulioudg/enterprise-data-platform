@@ -1,0 +1,63 @@
+# Serverless pipelines (no clusters to size). development: true in DEV gives faster restarts and no retries.
+resources:
+  pipelines:
+    hr_bronze_silver:
+      name: hr-bronze-silver-${bundle.target}
+      catalog: ${var.catalog}
+      schema: silver
+      serverless: true
+      channel: CURRENT
+      continuous: false
+      configuration:
+        edp.catalog: ${var.catalog}
+        edp.landing_root: /Volumes/${var.catalog}/bronze/landing/hr
+      libraries:
+      - file:
+          path: ../src/hr/pipelines/hr_bronze_silver.py
+      notifications:
+      - email_recipients:
+        - ${var.notification_email}
+        alerts:
+        - on-update-failure
+        - on-update-fatal-failure
+        - on-flow-failure
+    risk_bronze_silver:
+      name: risk-bronze-silver-${bundle.target}
+      catalog: ${var.risk_catalog}
+      schema: silver
+      serverless: true
+      channel: CURRENT
+      continuous: false
+      configuration:
+        edp.catalog: ${var.risk_catalog}
+        edp.landing_root: /Volumes/${var.risk_catalog}/bronze/landing/orm
+      libraries:
+      - file:
+          path: ../src/orm/pipelines/risk_bronze_silver.py
+      notifications:
+      - email_recipients:
+        - ${var.notification_email}
+        alerts:
+        - on-update-failure
+        - on-update-fatal-failure
+        - on-flow-failure
+    finance_ticks:
+      name: finance-ticks-${bundle.target}
+      catalog: ${var.finance_catalog}
+      schema: silver
+      serverless: true
+      channel: CURRENT
+      continuous: false
+      configuration:
+        edp.catalog: ${var.finance_catalog}
+        edp.landing_root: /Volumes/${var.finance_catalog}/bronze/landing/ticks
+      libraries:
+      - file:
+          path: ../src/finance/pipelines/finance_ticks.py
+      notifications:
+      - email_recipients:
+        - ${var.notification_email}
+        alerts:
+        - on-update-failure
+        - on-update-fatal-failure
+        - on-flow-failure
