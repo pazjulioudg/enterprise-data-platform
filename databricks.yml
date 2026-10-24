@@ -1,0 +1,49 @@
+# =====================================================================================
+# Declarative Automation Bundle (formerly Databricks Asset Bundles)
+# One definition of every pipeline and job, deployed to three environments:
+#   dev  -> workspace edp-dev   : you deploy from your laptop (development mode)
+#   test -> workspace edp-dev   : GitHub Actions deploys on merge to main (separate folder + catalogs)
+#   prod -> workspace "workspace": GitHub Actions deploys after a release manager approves
+# Replace the <...> placeholders once (build guide step 6.1).
+# =====================================================================================
+bundle:
+  name: enterprise-data-platform
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:            {description: "HR catalog (hr_dev / hr_test / hr_prod)"}
+  risk_catalog:       {description: "ORM catalog (risk_dev / risk_test / risk_prod)"}
+  finance_catalog:    {description: "Finance catalog (finance_dev / finance_test / finance_prod)"}
+  employees:          {description: "Synthetic HR population size", default: "2000"}
+  orm_as_at:          {description: "ORM position date (matches generator batches)", default: "2026-10-31"}
+  notification_email: {description: "Receives failure and SLA alerts", default: "replace-me@example.com"}
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace: {host: "https://<edp-dev-workspace>.cloud.databricks.com"}
+    variables: {catalog: hr_dev, risk_catalog: risk_dev, finance_catalog: finance_dev}
+
+  test:
+    mode: production
+    workspace:
+      host: "https://<edp-dev-workspace>.cloud.databricks.com"   # TEST shares the non-production workspace
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables: {catalog: hr_test, risk_catalog: risk_test, finance_catalog: finance_test}
+    run_as: {service_principal_name: "<sp-edp-test-application-id>"}
+    permissions:
+      - {group_name: edp-engineers, level: CAN_VIEW}
+
+  prod:
+    mode: production
+    workspace:
+      host: "https://<prod-workspace-named-workspace>.cloud.databricks.com"
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables: {catalog: hr_prod, risk_catalog: risk_prod, finance_catalog: finance_prod}
+    run_as: {service_principal_name: "<sp-edp-prod-application-id>"}
+    permissions:
+      - {group_name: edp-engineers, level: CAN_VIEW}
+      - {group_name: edp-release-managers, level: CAN_VIEW}
